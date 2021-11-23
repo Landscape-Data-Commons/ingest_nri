@@ -1,0 +1,14 @@
+version: "3.9"
+services:
+  nri:
+    build:
+      context: .
+      dockerfile: ./src/Dockerfile
+    # image: 
+    stdin_open: true 
+    tty: true        
+    container_name: nri
+    volumes:
+      - ./ingestables:/usr/src/ingestables:cached
+# docker-compose build
+# docker-compose run --rm ingester
