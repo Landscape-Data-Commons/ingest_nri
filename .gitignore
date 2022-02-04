@@ -7,5 +7,6 @@ pseudocode.py
 **/*.ldb
 **/*.accdb
 **/*.ini
-**/*.csv
+
 **/*.xlsx
+**/ingestables/nriupdate
