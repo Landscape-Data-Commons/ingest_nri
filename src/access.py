@@ -70,12 +70,16 @@ def header_build(nri_update_path,tablename):
             # print(path)
             if tablename in [i.split('.')[0] for i in os.listdir(path)]:
                 # print("yes")
-                tempdf = pd.read_csv(os.path.join(path,f'{tablename}.txt'), sep='|', index_col=False, names=cols.keys())
+                tempdf = pd.read_csv(os.path.join(path,f'{tablename}.txt'), sep='|', index_col=False, names=cols.keys(), low_memory=False)
 
 
                 fix_longitudes = ['TARGET_LONGITUDE','FIELD_LONGITUDE']
                 for field in tempdf.columns:
-                    if (cols[field]=="numeric") and (tempdf[field].dtype!=np.float64) and (tempdf[field].dtype!=np.int64) and (tempdf[field].dtype!='int'):
+                    # first fixes
+                    if 'SAGEBRUSH_SHAPE' in tempdf.columns and tempdf.SAGEBRUSH_SHAPE.dtype==object:
+                        tempdf['SAGEBRUSH_SHAPE'] = tempdf['SAGEBRUSH_SHAPE'].apply(lambda x: np.nan if (' ' in x) else x).astype('float').astype('Int64')
+
+                    if (cols[field]=="numeric") and (tempdf[field].dtype!=np.float64) and (tempdf[field].dtype!=np.int64) and (tempdf[field].dtype!='int') and (tempdf[field].dtype!='Int64'):
                         tempdf[field] = tempdf[field].apply(lambda i: i.strip())
                         tempdf[field] = pd.to_numeric(tempdf[field])
 
@@ -85,13 +89,18 @@ def header_build(nri_update_path,tablename):
                 if 'STATE' in tempdf.columns:
                     tempdf['STATE'] = tempdf['STATE'].map(lambda x: f'{x:0>2}')
 
+                # if 'SAGEBRUSH_SHAPE' in tempdf.columns and tempdf.SAGEBRUSH_SHAPE.dtype==object:
+                #     tempdf['SAGEBRUSH_SHAPE'] = tempdf['SAGEBRUSH_SHAPE'].apply(lambda x: np.nan if (' ' in x) else x).astype('float').astype('Int64')
+
+
                 dot_list = ['HIT1','HIT2','HIT3', 'HIT4', 'HIT5', 'HIT6', 'NONSOIL']
                 if field in dot_list:
                     tempdf[field] = tempdf[field].apply(lambda i: "" if ('.' in i) and (any([(j.isalpha()) or (j.isdigit()) for j in i])!=True) else i)
 
                                         ##### STRIP ANYWAY
                 if tempdf[field].dtype==np.object:
-                    tempdf[field] = tempdf[field].apply(lambda i: i.strip() if type(i)!=float else i)
+                    print("second strip")
+                    tempdf[field] = tempdf[field].apply(lambda i: i.strip() if (type(i)!=float) and (type(i)!=int) else i)
 
 
                 less_fields = ['statenm','countynm']
