@@ -19,6 +19,111 @@ import pyodbc as pyo
 # todo: on the fly dtypes on send_to_pg, double check previous col fixes on older datasets
 
 
+def tbl_choice(tablename, dir):
+    basepath = os.path.normpath(r"C:\Users\kbonefont\Documents\GitHub\ingest_nri\ingestables\nriupdate")
+    # basepath = p
+     # ingestables/nriupdate
+    paths = [i for i in os.listdir(basepath) if (".acc" not in i) and ("Point" not in i)]
+    path = os.path.join(basepath,paths[dir],f"{tablename}.txt")
+    basebase = os.path.dirname(basepath)
+    cols = type_lookup(basebase, tablename.upper(), "types")
+
+    return pd.read_csv(path, sep='|', index_col=False, names=cols.keys(), low_memory=False)
+
+
+midwest = ['IL', 'IN','IA','MI','MN','MO','OH','WI']
+northeast = ['CT', 'DE', 'ME', 'MD', 'MA', 'NH', 'NJ', 'NY', 'PA', 'RI', 'VT', 'WV']
+nplains = ['CO','KS', 'MT', 'NE', 'ND','SD','WY']
+scentral = ['AR','LA','OK','TX']
+seast = ['AL','FL','GA','KY', 'MS','NC','SC','TN','VA']
+west = ['AZ', 'CA', 'ID', 'NV', 'NM', 'OR','UT','WA']
+
+pastureids = {
+    "Midwest":1,
+    "North East": 2,
+    "Northern Plains":3,
+    "South Central": 4,
+    "South East": 5,
+    "West":6
+}
+
+def region_chooser(state):
+    if state in midwest:
+        return 'Midwest'
+    elif state in northeast:
+        return 'North East'
+    elif state in nplains:
+        return 'Northern Plains'
+    elif state in scentral:
+        return 'South Central'
+    elif state in seast:
+        return 'South East'
+    elif state in west:
+        return 'West'
+
+def id_chooser(region):
+    if type(region)==str:
+        return pastureids[region]
+    else:
+        return 0
+id_chooser(pd.NA)
+
+
+def ph_fix(pastureheights):
+    dfcopy = pastureheights.copy(deep=True)
+
+    # fixes all values in inches except
+    dfcopy.WHEIGHT = dfcopy.WHEIGHT.apply(lambda x: round((float(x.split()[0])*0.083333),3) if pd.isnull(x)!=True and
+                    (any([y.isdigit() for y in x])==True) and
+                    (any(['+' in z for z in x])!=True) and
+                    ('in' in x.split()) else
+                        (round(float(x.split()[0]),3) if pd.isnull(x)!=True and
+                        (any([y.isdigit() for y in x])==True) and
+                        (any(['+' in z for z in x])!=True) and
+                        ('ft' in x.split()) else x) )
+    # fixes all strings with spaces in values for WHEIGHT (no digits)
+    dfcopy.WHEIGHT = dfcopy.WHEIGHT.apply(lambda x: np.nan if (type(x)!=float) and (type(x)==str) and ('0' not in x.strip()) else x )
+
+    dfcopy.WHEIGHT = dfcopy.WHEIGHT.apply(lambda x: float(0) if (type(x)!=float) and (type(x)==str) and ('0' in x.strip()) else x )
+    # replaces '61+ ft  ' with 61.0
+    dfcopy.WHEIGHT = dfcopy.WHEIGHT.apply(lambda x: float(61) if (type(x)!=float) and (type(x)==str) and ("61+ ft" in x.strip()) else x)
+
+    dfcopy.HEIGHT = dfcopy.HEIGHT.apply(lambda x: round((float(x.split()[0])*0.083333),3) if pd.isnull(x)!=True and
+                    (any([y.isdigit() for y in x])==True) and
+                    (any(['+' in z for z in x])!=True) and
+                    ('in' in x.split()) else (round(float(x.split()[0]),3) if pd.isnull(x)!=True and
+                        (any([y.isdigit() for y in x])==True) and
+                        (any(['+' in z for z in x])!=True) and
+                        ('ft' in x.split()) else x) )
+    dfcopy.HEIGHT = dfcopy.HEIGHT.apply(lambda x: np.nan if (type(x)!=float) and (type(x)==str) and ('0' not in x.strip()) else x )
+
+    dfcopy.HEIGHT = dfcopy.HEIGHT.apply(lambda x: float(0) if (type(x)!=float) and (type(x)==str) and ('0' in x.strip()) else x )
+    # replaces '61+ ft  ' with 61.0
+    dfcopy.HEIGHT = dfcopy.HEIGHT.apply(lambda x: float(61) if (type(x)!=float) and (type(x)==str) and ("61+ ft" in x.strip()) else x)
+
+    dfcopy["HEIGHT_UNIT"] = 'ft'
+    dfcopy["WHEIGHT_UNIT"] = 'ft'
+    dfcopy = dfcopy.iloc[:,[0,1,2,3,4,5,6,7,8,11,9,10,12]]
+    return dfcopy
+
+disturbance_fix(dist)
+def disturbance_fix(disturbance):
+    dftemp = disturbance.copy(deep=True)
+    for i in dftemp.columns[6:41]:
+        dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: 1 if (type(x)==str) and ("Y" in x) else x)
+        dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: 0 if (type(x)==str) and ("N" in x) else x)
+    return dftemp
+
+
+def practice_fix(practice):
+    dftemp = practice.copy(deep=True)
+    for i in dftemp.columns[5:51]:
+        dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: 1 if (type(x)==str) and ("Y" in x) else x)
+        dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: 0 if (type(x)==str) and ("N" in x) else x)
+    dftemp.drop(columns=['P528A', 'N528A'], inplace=True)
+    return dftemp
+
+
 def ret_access(whichmdb):
     MDB = whichmdb
     DRV = '{Microsoft Access Driver (*.mdb, *.accdb)}'
