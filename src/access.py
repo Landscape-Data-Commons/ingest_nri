@@ -18,55 +18,63 @@ import pyodbc as pyo
 
 # todo: on the fly dtypes on send_to_pg, double check previous col fixes on older datasets
 
-
 def tbl_choice(tablename, dir):
     basepath = os.path.normpath(r"C:\Users\kbonefont\Documents\GitHub\ingest_nri\ingestables\nriupdate")
     # basepath = p
      # ingestables/nriupdate
     paths = [i for i in os.listdir(basepath) if (".acc" not in i) and ("Point" not in i)]
     path = os.path.join(basepath,paths[dir],f"{tablename}.txt")
+
     basebase = os.path.dirname(basepath)
     cols = type_lookup(basebase, tablename.upper(), "types")
 
     return pd.read_csv(path, sep='|', index_col=False, names=cols.keys(), low_memory=False)
 
 
-midwest = ['IL', 'IN','IA','MI','MN','MO','OH','WI']
-northeast = ['CT', 'DE', 'ME', 'MD', 'MA', 'NH', 'NJ', 'NY', 'PA', 'RI', 'VT', 'WV']
-nplains = ['CO','KS', 'MT', 'NE', 'ND','SD','WY']
-scentral = ['AR','LA','OK','TX']
-seast = ['AL','FL','GA','KY', 'MS','NC','SC','TN','VA']
-west = ['AZ', 'CA', 'ID', 'NV', 'NM', 'OR','UT','WA']
 
-pastureids = {
-    "Midwest":1,
-    "North East": 2,
-    "Northern Plains":3,
-    "South Central": 4,
-    "South East": 5,
-    "West":6
-}
 
-def region_chooser(state):
-    if state in midwest:
-        return 'Midwest'
-    elif state in northeast:
-        return 'North East'
-    elif state in nplains:
-        return 'Northern Plains'
-    elif state in scentral:
-        return 'South Central'
-    elif state in seast:
-        return 'South East'
-    elif state in west:
-        return 'West'
+def state_fix(statenm):
+    tempdf = statenm.copy(deep=True)
+    midwest = ['IL', 'IN','IA','MI','MN','MO','OH','WI']
+    northeast = ['CT', 'DE', 'ME', 'MD', 'MA', 'NH', 'NJ', 'NY', 'PA', 'RI', 'VT', 'WV']
+    nplains = ['CO','KS', 'MT', 'NE', 'ND','SD','WY']
+    scentral = ['AR','LA','OK','TX']
+    seast = ['AL','FL','GA','KY', 'MS','NC','SC','TN','VA']
+    west = ['AZ', 'CA', 'ID', 'NV', 'NM', 'OR','UT','WA']
 
-def id_chooser(region):
-    if type(region)==str:
-        return pastureids[region]
-    else:
-        return 0
-id_chooser(pd.NA)
+    pastureids = {
+        "Midwest":1,
+        "North East": 2,
+        "Northern Plains":3,
+        "South Central": 4,
+        "South East": 5,
+        "West":6
+    }
+
+    def region_chooser(state):
+        if state in midwest:
+            return 'Midwest'
+        elif state in northeast:
+            return 'North East'
+        elif state in nplains:
+            return 'Northern Plains'
+        elif state in scentral:
+            return 'South Central'
+        elif state in seast:
+            return 'South East'
+        elif state in west:
+            return 'West'
+
+    def id_chooser(region):
+        if type(region)==str:
+            return pastureids[region]
+        else:
+            return 0
+
+    tempdf['PastureRegionName'] = tempdf.STABBR.apply(lambda x: region_chooser(x))
+    tempdf['PastureRegionID'] = tempdf.PastureRegionName.apply(lambda x: id_chooser(x))
+    return tempdf
+
 
 
 def ph_fix(pastureheights):
@@ -106,7 +114,6 @@ def ph_fix(pastureheights):
     dfcopy = dfcopy.iloc[:,[0,1,2,3,4,5,6,7,8,11,9,10,12]]
     return dfcopy
 
-disturbance_fix(dist)
 def disturbance_fix(disturbance):
     dftemp = disturbance.copy(deep=True)
     for i in dftemp.columns[6:41]:
@@ -177,17 +184,28 @@ def header_build(nri_update_path,tablename):
                 # print("yes")
                 tempdf = pd.read_csv(os.path.join(path,f'{tablename}.txt'), sep='|', index_col=False, names=cols.keys(), low_memory=False)
 
+                if "statenm" in tablename:
+                    tempdf = state_fix(tempdf)
 
+                if "pastureheights" in tablename:
+                    print("checkpoint 1")
+                    tempdf = ph_fix(tempdf)
+                if "disturbance" in tablename:
+                    tempdf = disturbance_fix(tempdf)
+                if "practice" in tablename:
+                    tempdf = practice_fix(tempdf)
+
+                print("checkpoint 2")
                 fix_longitudes = ['TARGET_LONGITUDE','FIELD_LONGITUDE']
                 for field in tempdf.columns:
                     # first fixes
                     if 'SAGEBRUSH_SHAPE' in tempdf.columns and tempdf.SAGEBRUSH_SHAPE.dtype==object:
                         tempdf['SAGEBRUSH_SHAPE'] = tempdf['SAGEBRUSH_SHAPE'].apply(lambda x: np.nan if (' ' in x) else x).astype('float').astype('Int64')
 
-                    if (cols[field]=="numeric") and (tempdf[field].dtype!=np.float64) and (tempdf[field].dtype!=np.int64) and (tempdf[field].dtype!='int') and (tempdf[field].dtype!='Int64'):
-                        tempdf[field] = tempdf[field].apply(lambda i: i.strip())
-                        tempdf[field] = pd.to_numeric(tempdf[field])
-
+                    # if (cols[field]=="numeric") and (tempdf[field].dtype!=np.float64) and (tempdf[field].dtype!=np.int64) and (tempdf[field].dtype!='int') and (tempdf[field].dtype!='Int64'):
+                    #     tempdf[field] = tempdf[field].apply(lambda i: i.strip())
+                    #     tempdf[field] = pd.to_numeric(tempdf[field])
+                print("checkpoint 3")
                 if 'COUNTY' in tempdf.columns:
                     tempdf['COUNTY'] = tempdf['COUNTY'].map(lambda x: f'{x:0>3}')
 
@@ -197,7 +215,7 @@ def header_build(nri_update_path,tablename):
                 # if 'SAGEBRUSH_SHAPE' in tempdf.columns and tempdf.SAGEBRUSH_SHAPE.dtype==object:
                 #     tempdf['SAGEBRUSH_SHAPE'] = tempdf['SAGEBRUSH_SHAPE'].apply(lambda x: np.nan if (' ' in x) else x).astype('float').astype('Int64')
 
-
+                print("checkpoint 4")
                 dot_list = ['HIT1','HIT2','HIT3', 'HIT4', 'HIT5', 'HIT6', 'NONSOIL']
                 if field in dot_list:
                     tempdf[field] = tempdf[field].apply(lambda i: "" if ('.' in i) and (any([(j.isalpha()) or (j.isdigit()) for j in i])!=True) else i)
@@ -210,10 +228,13 @@ def header_build(nri_update_path,tablename):
 
                 less_fields = ['statenm','countynm']
                 if tablename not in less_fields:
+                    print("checkpoint 5")
                     tempdf = dbkey_gen(tempdf, 'PrimaryKey', 'SURVEY', 'STATE', 'COUNTY','PSU','POINT')
                     tempdf = dbkey_gen(tempdf, 'FIPSPSUPNT', 'STATE', 'COUNTY','PSU','POINT')
                 tempdf['DBKey'] = ''.join(['NRI_',f'{date.today().year}'])
 
+
+                print("checkpoint 6")
                 tablepack[f'{tablename}_{count}'] = tempdf
                 count+=1
             else:
