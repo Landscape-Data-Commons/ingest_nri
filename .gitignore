@@ -6,6 +6,7 @@ pseudocode.py
 **/*.mdb
 **/*.ldb
 **/*.accdb
+**/*.laccdb
 **/*.ini
 
 **/*.xlsx

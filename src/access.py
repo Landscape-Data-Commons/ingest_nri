@@ -16,7 +16,106 @@ import pyodbc as pyo
 # type_lookup to match datacolumn definitions
 # send_to_pg to send to DB
 
-# todo: on the fly dtypes on send_to_pg, double check previous col fixes on older datasets
+
+def revised_otf(df, otftypes):
+    for i in df.columns:
+        if i not in otftypes.keys():
+            if df.dtypes[i]=='object':
+                otftypes[i] = sqlalchemy.sql.sqltypes.String
+            elif df.dtypes[i]=="int64":
+                otftypes[i] = sqlalchemy.types.Integer
+            elif df.dtypes[i]=="float64":
+                otftypes[i] = sqlalchemy.sql.sqltypes.Float
+        else:
+            if df.dtypes[i]=="int64" or df.dtypes[i]=="Int64":
+                otftypes[i] = sqlalchemy.types.Integer
+            else:
+                pass
+    return otftypes
+
+def header_build(nri_update_path,tablename):
+    tablepack = {}
+    tablesets = [i for i in os.listdir(nri_update_path) if (not i.endswith(".accdb") and not i.endswith(".laccdb")) and ("Coordinates" not in i)]
+    try:
+        count=0
+        for i in tablesets:
+            print(f"working on tableset '{i}'...")
+            basepath = nri_update_path # ingestables/nriupdate
+            path = os.path.join(nri_update_path,i)
+            basebase = os.path.dirname(basepath) # ingestables/
+
+            cols = type_lookup(basebase, tablename.upper(), "types")
+            # print(path)
+            if tablename in [i.split('.')[0] for i in os.listdir(path)]:
+                print(f"working on {tablename}..")
+                tempdf = pd.read_csv(os.path.join(path,f'{tablename}.txt'), sep='|', index_col=False, names=cols.keys(), low_memory=False)
+
+                if "statenm" in tablename:
+                    print("fixing statenm..")
+                    tempdf = state_fix(tempdf)
+
+                if "pastureheights" in tablename:
+                    print("fixing pastureheights...")
+                    tempdf = ph_fix(tempdf)
+                if "disturbance" in tablename:
+                    print("fixing disturbance...")
+                    tempdf = disturbance_fix(tempdf)
+                if "practice" in tablename:
+                    print("fixing practice ...")
+                    tempdf = practice_fix(tempdf)
+
+
+                # print("checkpoint 2")
+                # print("after 4 table fixes")
+                fix_longitudes = ['TARGET_LONGITUDE','FIELD_LONGITUDE']
+                for field in tempdf.columns:
+                    # first fixes
+                    if 'SAGEBRUSH_SHAPE' in tempdf.columns and tempdf.SAGEBRUSH_SHAPE.dtype==object:
+                        tempdf['SAGEBRUSH_SHAPE'] = tempdf['SAGEBRUSH_SHAPE'].apply(lambda x: np.nan if (' ' in x) else x).astype('float').astype('Int64')
+                    if field in cols.keys():
+                        if (cols[field]=="numeric") and (tempdf[field].dtype=='object'):
+                            tempdf[field] = tempdf[field].apply(lambda i: i.strip() if (type(i)==str) else x)
+                            tempdf[field] = pd.to_numeric(tempdf[field])
+                # print("checkpoint 3")
+                if 'COUNTY' in tempdf.columns:
+                    tempdf['COUNTY'] = tempdf['COUNTY'].map(lambda x: f'{x:0>3}')
+
+                if 'STATE' in tempdf.columns:
+                    tempdf['STATE'] = tempdf['STATE'].map(lambda x: f'{x:0>2}')
+
+                # if 'SAGEBRUSH_SHAPE' in tempdf.columns and tempdf.SAGEBRUSH_SHAPE.dtype==object:
+                #     tempdf['SAGEBRUSH_SHAPE'] = tempdf['SAGEBRUSH_SHAPE'].apply(lambda x: np.nan if (' ' in x) else x).astype('float').astype('Int64')
+
+                # print("checkpoint 4")
+                dot_list = ['HIT1','HIT2','HIT3', 'HIT4', 'HIT5', 'HIT6', 'NONSOIL']
+                if field in dot_list:
+                    tempdf[field] = tempdf[field].apply(lambda i: "" if ('.' in i) and (any([(j.isalpha()) or (j.isdigit()) for j in i])!=True) else i)
+
+                                        ##### STRIP ANYWAY
+                if tempdf[field].dtype==np.object:
+                    # print("second strip")
+                    tempdf[field] = tempdf[field].apply(lambda i: i.strip() if (type(i)!=float) and (type(i)!=int) else i)
+
+
+                less_fields = ['statenm','countynm']
+                if tablename not in less_fields:
+                    # print("checkpoint 5")
+                    tempdf = dbkey_gen(tempdf, 'PrimaryKey', 'SURVEY', 'STATE', 'COUNTY','PSU','POINT')
+                    tempdf = dbkey_gen(tempdf, 'FIPSPSUPNT', 'STATE', 'COUNTY','PSU','POINT')
+                tempdf['DBKey'] = ''.join(['NRI_',f'{date.today().year}'])
+
+
+                # print("checkpoint 6")
+                tablepack[f'{tablename}_{count}'] = tempdf
+                count+=1
+            else:
+                # print(f'{tablename} not in {i}')
+                pass
+
+        return pd.concat([i for i in tablepack.values()])
+            # return tempdf
+    except Exception as e:
+        print(e)
 
 def tbl_choice(tablename, dir):
     basepath = os.path.normpath(r"C:\Users\kbonefont\Documents\GitHub\ingest_nri\ingestables\nriupdate")
@@ -30,10 +129,8 @@ def tbl_choice(tablename, dir):
 
     return pd.read_csv(path, sep='|', index_col=False, names=cols.keys(), low_memory=False)
 
-
-
-
 def state_fix(statenm):
+    print("making copy")
     tempdf = statenm.copy(deep=True)
     midwest = ['IL', 'IN','IA','MI','MN','MO','OH','WI']
     northeast = ['CT', 'DE', 'ME', 'MD', 'MA', 'NH', 'NJ', 'NY', 'PA', 'RI', 'VT', 'WV']
@@ -70,12 +167,11 @@ def state_fix(statenm):
             return pastureids[region]
         else:
             return 0
-
+    print("adding pastureregionname")
     tempdf['PastureRegionName'] = tempdf.STABBR.apply(lambda x: region_chooser(x))
+    print("adding pastureregionid")
     tempdf['PastureRegionID'] = tempdf.PastureRegionName.apply(lambda x: id_chooser(x))
     return tempdf
-
-
 
 def ph_fix(pastureheights):
     dfcopy = pastureheights.copy(deep=True)
@@ -119,17 +215,19 @@ def disturbance_fix(disturbance):
     for i in dftemp.columns[6:41]:
         dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: 1 if (type(x)==str) and ("Y" in x) else x)
         dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: 0 if (type(x)==str) and ("N" in x) else x)
+        dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: np.nan if (type(x)!=int) else x)
+        dftemp[f'{i}'] = dftemp[f'{i}'].astype('Int64')
     return dftemp
-
 
 def practice_fix(practice):
     dftemp = practice.copy(deep=True)
     for i in dftemp.columns[5:51]:
         dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: 1 if (type(x)==str) and ("Y" in x) else x)
         dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: 0 if (type(x)==str) and ("N" in x) else x)
+        dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: np.nan if (type(x)!=int) else x)
+        dftemp[f'{i}'] = dftemp[f'{i}'].astype('Int64')
     dftemp.drop(columns=['P528A', 'N528A'], inplace=True)
     return dftemp
-
 
 def ret_access(whichmdb):
     MDB = whichmdb
@@ -168,83 +266,6 @@ def type_lookup(basepath, tablename, which_return):
 
     return return_dict[which_return]
 
-def header_build(nri_update_path,tablename):
-    tablepack = {}
-    tablesets = [i for i in os.listdir(nri_update_path) if (not i.endswith(".accdb") and not i.endswith(".laccdb")) and ("Coordinates" not in i)]
-    try:
-        count=0
-        for i in tablesets:
-            basepath = nri_update_path # ingestables/nriupdate
-            path = os.path.join(nri_update_path,i)
-            basebase = os.path.dirname(basepath) # ingestables/
-
-            cols = type_lookup(basebase, tablename.upper(), "types")
-            # print(path)
-            if tablename in [i.split('.')[0] for i in os.listdir(path)]:
-                # print("yes")
-                tempdf = pd.read_csv(os.path.join(path,f'{tablename}.txt'), sep='|', index_col=False, names=cols.keys(), low_memory=False)
-
-                if "statenm" in tablename:
-                    tempdf = state_fix(tempdf)
-
-                if "pastureheights" in tablename:
-                    print("checkpoint 1")
-                    tempdf = ph_fix(tempdf)
-                if "disturbance" in tablename:
-                    tempdf = disturbance_fix(tempdf)
-                if "practice" in tablename:
-                    tempdf = practice_fix(tempdf)
-
-                print("checkpoint 2")
-                fix_longitudes = ['TARGET_LONGITUDE','FIELD_LONGITUDE']
-                for field in tempdf.columns:
-                    # first fixes
-                    if 'SAGEBRUSH_SHAPE' in tempdf.columns and tempdf.SAGEBRUSH_SHAPE.dtype==object:
-                        tempdf['SAGEBRUSH_SHAPE'] = tempdf['SAGEBRUSH_SHAPE'].apply(lambda x: np.nan if (' ' in x) else x).astype('float').astype('Int64')
-
-                    # if (cols[field]=="numeric") and (tempdf[field].dtype!=np.float64) and (tempdf[field].dtype!=np.int64) and (tempdf[field].dtype!='int') and (tempdf[field].dtype!='Int64'):
-                    #     tempdf[field] = tempdf[field].apply(lambda i: i.strip())
-                    #     tempdf[field] = pd.to_numeric(tempdf[field])
-                print("checkpoint 3")
-                if 'COUNTY' in tempdf.columns:
-                    tempdf['COUNTY'] = tempdf['COUNTY'].map(lambda x: f'{x:0>3}')
-
-                if 'STATE' in tempdf.columns:
-                    tempdf['STATE'] = tempdf['STATE'].map(lambda x: f'{x:0>2}')
-
-                # if 'SAGEBRUSH_SHAPE' in tempdf.columns and tempdf.SAGEBRUSH_SHAPE.dtype==object:
-                #     tempdf['SAGEBRUSH_SHAPE'] = tempdf['SAGEBRUSH_SHAPE'].apply(lambda x: np.nan if (' ' in x) else x).astype('float').astype('Int64')
-
-                print("checkpoint 4")
-                dot_list = ['HIT1','HIT2','HIT3', 'HIT4', 'HIT5', 'HIT6', 'NONSOIL']
-                if field in dot_list:
-                    tempdf[field] = tempdf[field].apply(lambda i: "" if ('.' in i) and (any([(j.isalpha()) or (j.isdigit()) for j in i])!=True) else i)
-
-                                        ##### STRIP ANYWAY
-                if tempdf[field].dtype==np.object:
-                    print("second strip")
-                    tempdf[field] = tempdf[field].apply(lambda i: i.strip() if (type(i)!=float) and (type(i)!=int) else i)
-
-
-                less_fields = ['statenm','countynm']
-                if tablename not in less_fields:
-                    print("checkpoint 5")
-                    tempdf = dbkey_gen(tempdf, 'PrimaryKey', 'SURVEY', 'STATE', 'COUNTY','PSU','POINT')
-                    tempdf = dbkey_gen(tempdf, 'FIPSPSUPNT', 'STATE', 'COUNTY','PSU','POINT')
-                tempdf['DBKey'] = ''.join(['NRI_',f'{date.today().year}'])
-
-
-                print("checkpoint 6")
-                tablepack[f'{tablename}_{count}'] = tempdf
-                count+=1
-            else:
-                # print(f'{tablename} not in {i}')
-                pass
-        return pd.concat([i for i in tablepack.values()])
-            # return tempdf
-    except Exception as e:
-        print(e)
-
 def batcher(nriupdate_path, acc_path, mdb=True):
     tables = {}
     tablelist = table_list_creator(nriupdate_path)
@@ -256,7 +277,6 @@ def batcher(nriupdate_path, acc_path, mdb=True):
     for k,v in tables.items():
         pg_send(v,acc_path,k, access=True if mdb==True else False)
 
-
 def table_list_creator(filedirectory):
     table_master_set = set()
     nriupdate_dirs = [i for i in os.listdir(filedirectory) if (not i.endswith(".accdb") and not i.endswith(".laccdb")) and ("Coordinates" not in i)]
@@ -266,7 +286,6 @@ def table_list_creator(filedirectory):
             table_master_set.add(j)
     return [i for i in table_master_set]
 
-
 def pg_send(df,acc_path, tablename, access = False):
     """
     usage:
@@ -274,6 +293,7 @@ def pg_send(df,acc_path, tablename, access = False):
     todo:
     X switching off/on access and pg --done
     """
+
     con = db.str
     cursor = con.cursor()
     #access path changes!
@@ -283,11 +303,12 @@ def pg_send(df,acc_path, tablename, access = False):
         return (seq[pos:pos + size] for pos in range(0, len(seq), size))
 
     engine = create_engine(sql_str(config()))
+
     chunksize = int(len(df) / 10)
     tqdm.write(f'sending {tablename} to pg...')
     only_once = set()
     onthefly = {}
-
+    basebase = os.path.dirname(acc_path)
     with tqdm(total=len(df)) as pbar:
         """
         loop to use the progress bar on each iteration
@@ -296,12 +317,55 @@ def pg_send(df,acc_path, tablename, access = False):
             replace = "replace" if i == 0 else "append"
             # area for on the fly pg/access type creation
             #  using alchemy_ret
+            temptypes = type_lookup(basebase, tablename.upper(), "types")
+            templengths = type_lookup(basebase, tablename.upper(), "lengths")
+            def alchemy_ret(type,len=None):
+                """
+                function that takes a type(numeric or character+length) returns
+                a sqlalchemy/pg compatible type
+                """
+                if (type=='numeric') and (len==None):
+                    return sqlalchemy.types.Float(precision=3, asdecimal=True)
+                elif (type=='character') and (len!=None):
+                    return sqlalchemy.types.String(length=len)
+
+            for key in temptypes:
+                """
+                creating custom dictionary per table to map pandas types to pg
+                """
+                state_key = ["STATE", "COUNTY"]
+                if 'PrimaryKey' not in temptypes:
+                    onthefly.update({"PrimaryKey":sa_a.ShortText(17)})
+                if 'FIPSPSUPNT' not in temptypes:
+                    onthefly.update({"FIPSPSUPNT":sa_a.ShortText(13)})
+                if 'PastureRegion' not in temptypes:
+                    onthefly.update({"PastureRegion":sa_a.ShortText(15)})
+                if key not in only_once:
+                    only_once.add(key)
+
+                    if temptypes[key]=='numeric':
+                        onthefly.update({f'{key}':alchemy_ret(temptypes[key])})
+                        for k in state_key:
+                            if k == "STATE":
+                                onthefly.update({f'{k}':alchemy_ret('character',2)})
+                            if k=="COUNTY":
+                                onthefly.update({f'{k}':alchemy_ret('character',3)})
+
+                    if temptypes[key]=='character':
+                        onthefly.update({f'{key}':alchemy_ret(temptypes[key],templengths[key])})
+
+                        if key == "PTNOTE":
+                            onthefly.update({"PTNOTE":sqlalchemy.types.Text})
+
+            onthefly = revised_otf(df, onthefly)
+
+
 
             if access!=False:
                 cdf.to_sql(name=f'{tablename}',
                            con=ret_access(acc_path),
                            index=False,
-                           # dtype=onthefly,
+                           dtype=onthefly,
                            if_exists=replace)
             # else clause will send to pg
 
@@ -310,9 +374,6 @@ def pg_send(df,acc_path, tablename, access = False):
         tqdm._instances.clear()
     tqdm.write(f'{tablename} sent to db')
 
-#
-# def dbkey_gen(df,newfield, *fields):
-#     df[f'{newfield}'] = (df[[f'{field.strip()}' for field in fields]].astype(str)).agg(''.join,axis=1).astype(object)
 def dbkey_gen(df,newfield, *fields):
     dfcopy = df.copy()
     dfcopy[f'{newfield}'] = (df[[f'{field.strip()}' for field in fields]].astype(str)).agg(''.join,axis=1).astype(object)
