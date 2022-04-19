@@ -8,6 +8,9 @@ pseudocode.py
 **/*.accdb
 **/*.laccdb
 **/*.ini
+**/nri-update
+**/new-nri
 
 **/*.xlsx
+**/*.csv
 **/ingestables/nriupdate

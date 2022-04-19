@@ -36,6 +36,14 @@ def revised_otf(df, otftypes):
 def header_build(nri_update_path,tablename):
     tablepack = {}
     tablesets = [i for i in os.listdir(nri_update_path) if (not i.endswith(".accdb") and not i.endswith(".laccdb")) and ("Coordinates" not in i)]
+
+    tbl_years = {
+        'pasture2013-2018':2013,
+        'range2011-2016':2011,
+        'RangeChange2004-2008':2004,
+        'RangeChange2009-2015':2009,
+        'rangepasture2017_2018':2017
+    }
     try:
         count=0
         for i in tablesets:
@@ -44,11 +52,17 @@ def header_build(nri_update_path,tablename):
             path = os.path.join(nri_update_path,i)
             basebase = os.path.dirname(basepath) # ingestables/
 
-            cols = type_lookup(basebase, tablename.upper(), "types")
+            tblyear = tbl_years[i]
+            # cols = type_lookup(basebase, tablename.upper(), "types")
             # print(path)
             if tablename in [i.split('.')[0] for i in os.listdir(path)]:
                 print(f"working on {tablename}..")
-                tempdf = pd.read_csv(os.path.join(path,f'{tablename}.txt'), sep='|', index_col=False, names=cols.keys(), low_memory=False)
+                tempdf = pd.read_csv(
+                    os.path.join(path,f'{tablename}.txt'),
+                    sep='|',
+                    index_col=False,
+                    names=type_lookup(os.path.dirname(basebase),tablename, "types", tblyear).keys(),
+                    low_memory=False)
 
                 if "statenm" in tablename:
                     print("fixing statenm..")
@@ -64,6 +78,9 @@ def header_build(nri_update_path,tablename):
                     print("fixing practice ...")
                     tempdf = practice_fix(tempdf)
 
+                if "point" in tablename:
+                    print("fixing point ...")
+                    tempdf = point_fix(tempdf)
 
                 # print("checkpoint 2")
                 # print("after 4 table fixes")
@@ -72,19 +89,16 @@ def header_build(nri_update_path,tablename):
                     # first fixes
                     if 'SAGEBRUSH_SHAPE' in tempdf.columns and tempdf.SAGEBRUSH_SHAPE.dtype==object:
                         tempdf['SAGEBRUSH_SHAPE'] = tempdf['SAGEBRUSH_SHAPE'].apply(lambda x: np.nan if (' ' in x) else x).astype('float').astype('Int64')
-                    if field in cols.keys():
-                        if (cols[field]=="numeric") and (tempdf[field].dtype=='object'):
-                            tempdf[field] = tempdf[field].apply(lambda i: i.strip() if (type(i)==str) else x)
-                            tempdf[field] = pd.to_numeric(tempdf[field])
+                    # if field in cols.keys():
+                    #     if (cols[field]=="numeric") and (tempdf[field].dtype=='object'):
+                    #         tempdf[field] = tempdf[field].apply(lambda i: i.strip() if (type(i)==str) else x)
+                    #         tempdf[field] = pd.to_numeric(tempdf[field])
                 # print("checkpoint 3")
                 if 'COUNTY' in tempdf.columns:
                     tempdf['COUNTY'] = tempdf['COUNTY'].map(lambda x: f'{x:0>3}')
 
                 if 'STATE' in tempdf.columns:
                     tempdf['STATE'] = tempdf['STATE'].map(lambda x: f'{x:0>2}')
-
-                # if 'SAGEBRUSH_SHAPE' in tempdf.columns and tempdf.SAGEBRUSH_SHAPE.dtype==object:
-                #     tempdf['SAGEBRUSH_SHAPE'] = tempdf['SAGEBRUSH_SHAPE'].apply(lambda x: np.nan if (' ' in x) else x).astype('float').astype('Int64')
 
                 # print("checkpoint 4")
                 dot_list = ['HIT1','HIT2','HIT3', 'HIT4', 'HIT5', 'HIT6', 'NONSOIL']
@@ -229,6 +243,20 @@ def practice_fix(practice):
     dftemp.drop(columns=['P528A', 'N528A'], inplace=True)
     return dftemp
 
+def point_fix(point):
+    yn_indices = [,'FULL_ESD_PLOT', 'BASAL_GAPS_NESW', 'CANOPY_GAPS_NESW',
+       'BASAL_GAPS_NWSE', 'CANOPY_GAPS_NWSE', 'HAYED', 'OPT_SSI_PASTURE',
+       'OPT_DWR_PASTURE', 'OPT_DWR_RANGE', 'SAGE_EXISTS',
+       'PERENNIAL_CANOPY_GAPS_NESW', 'PERENNIAL_CANOPY_GAPS_NWSE',
+       'COMPONENT_POPULATED', 'GAPS_DIFFERENT_NESW', 'GAPS_DIFFERENT_NWSE']
+    dftemp = point.copy(deep=True)
+    for i in dftemp.filter([yn_indices]):
+        dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: 1 if (type(x)==str) and ("Y" in x) else x)
+        dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: 0 if (type(x)==str) and ("N" in x) else x)
+        dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: np.nan if (type(x)!=int) else x)
+        dftemp[f'{i}'] = dftemp[f'{i}'].astype('Int64')
+    return dftemp
+
 def ret_access(whichmdb):
     MDB = whichmdb
     DRV = '{Microsoft Access Driver (*.mdb, *.accdb)}'
@@ -237,7 +265,7 @@ def ret_access(whichmdb):
     engine = create_engine(connection_url)
     return engine
 
-def type_lookup(basepath, tablename, which_return):
+def type_lookup(basepath, tablename, which_return, year):
     """
     ex:
     type_lookup(path, "ALTWOODY", "lengths")
@@ -246,9 +274,29 @@ def type_lookup(basepath, tablename, which_return):
     typelength = {}
     return_dict = {}
 
-    where_expl = [ i for i in os.listdir(basepath) if 'explanations' in i]
-    exp_file = os.path.join(basepath,where_expl[0])
-    nri_explanations = pd.read_csv(exp_file)
+    columnexps = {
+        "2004" : r"C:\Users\kbonefont\Desktop\nri\ingestables\2004-2008 NRI Range Change Data Dump Columns.xlsx",
+        "2009" : r"C:\Users\kbonefont\Desktop\nri\ingestables\2009-2018 NRI Range Data Dump Columns.xlsx",
+        "2019" : r"C:\Users\kbonefont\Desktop\nri\ingestables\2020 nri_data_column_explanations.csv"
+    }
+
+    if int(year)>=2004 and int(year)<=2008:
+        exp_file = columnexps["2004"]
+    elif int(year)>=2009 and int(year)<=2018:
+        exp_file = columnexps["2009"]
+    else:
+        exp_file = columnexps["2019"]
+
+
+    # if 'ecosite'.upper() in tablename:
+    #     print("OK")
+    #     exp_file = os.path.join(basepath,'2004-2008 NRI Range Change Data Dump Columns.xlsx')
+    # else:
+    #     print("NOT")
+    #     exp_file = os.path.join(basepath,where_expl[0])
+
+
+    nri_explanations = pd.read_excel(exp_file) if (int(year)>=2004) and (int(year)<=2018) else pd.read_csv(exp_file)
     is_target = nri_explanations['Table name'] == f'{tablename.upper()}'
     original_list = nri_explanations[is_target]['Field name'].values
 
