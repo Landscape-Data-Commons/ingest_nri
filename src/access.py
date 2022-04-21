@@ -42,7 +42,11 @@ def header_build(nri_update_path,tablename):
         'range2011-2016':2011,
         'RangeChange2004-2008':2004,
         'RangeChange2009-2015':2009,
-        'rangepasture2017_2018':2017
+        'rangepasture2017_2018':2017,
+        'pasture2019':2019,
+        'pasture2020':2019,
+        'range2019':2019,
+        'range2020':2019,
     }
     try:
         count=0
@@ -53,7 +57,7 @@ def header_build(nri_update_path,tablename):
             basebase = os.path.dirname(basepath) # ingestables/
 
             tblyear = tbl_years[i]
-            # cols = type_lookup(basebase, tablename.upper(), "types")
+            cols = type_lookup(os.path.dirname(basebase),tablename, "types", tblyear)
             # print(path)
             if tablename in [i.split('.')[0] for i in os.listdir(path)]:
                 print(f"working on {tablename}..")
@@ -61,7 +65,7 @@ def header_build(nri_update_path,tablename):
                     os.path.join(path,f'{tablename}.txt'),
                     sep='|',
                     index_col=False,
-                    names=type_lookup(os.path.dirname(basebase),tablename, "types", tblyear).keys(),
+                    names=cols.keys(),
                     low_memory=False)
 
                 if "statenm" in tablename:
@@ -82,33 +86,29 @@ def header_build(nri_update_path,tablename):
                     print("fixing point ...")
                     tempdf = point_fix(tempdf)
 
+                if "concern" in tablename:
+                    print("fixing concern ...")
+                    tempdf = concern_fix(tempdf)
+
+
                 # print("checkpoint 2")
                 # print("after 4 table fixes")
                 fix_longitudes = ['TARGET_LONGITUDE','FIELD_LONGITUDE']
-                for field in tempdf.columns:
-                    # first fixes
-                    if 'SAGEBRUSH_SHAPE' in tempdf.columns and tempdf.SAGEBRUSH_SHAPE.dtype==object:
-                        tempdf['SAGEBRUSH_SHAPE'] = tempdf['SAGEBRUSH_SHAPE'].apply(lambda x: np.nan if (' ' in x) else x).astype('float').astype('Int64')
-                    # if field in cols.keys():
-                    #     if (cols[field]=="numeric") and (tempdf[field].dtype=='object'):
-                    #         tempdf[field] = tempdf[field].apply(lambda i: i.strip() if (type(i)==str) else x)
-                    #         tempdf[field] = pd.to_numeric(tempdf[field])
-                # print("checkpoint 3")
+
+                # if "pintercept" in tablename:
+                for i in tempdf.columns:
+                    if tempdf[i].dtype=="object":
+                        tempdf[i] = tempdf[i].apply(lambda x: pd.NA if type(x)!="float" and
+                                    pd.isnull(x)!=True and
+                                    (str(x).strip()=="." or
+                                    str(x).strip()=="")
+                                    else str(x).strip())
+
                 if 'COUNTY' in tempdf.columns:
                     tempdf['COUNTY'] = tempdf['COUNTY'].map(lambda x: f'{x:0>3}')
 
                 if 'STATE' in tempdf.columns:
                     tempdf['STATE'] = tempdf['STATE'].map(lambda x: f'{x:0>2}')
-
-                # print("checkpoint 4")
-                dot_list = ['HIT1','HIT2','HIT3', 'HIT4', 'HIT5', 'HIT6', 'NONSOIL']
-                if field in dot_list:
-                    tempdf[field] = tempdf[field].apply(lambda i: "" if ('.' in i) and (any([(j.isalpha()) or (j.isdigit()) for j in i])!=True) else i)
-
-                                        ##### STRIP ANYWAY
-                if tempdf[field].dtype==np.object:
-                    # print("second strip")
-                    tempdf[field] = tempdf[field].apply(lambda i: i.strip() if (type(i)!=float) and (type(i)!=int) else i)
 
 
                 less_fields = ['statenm','countynm']
@@ -120,13 +120,26 @@ def header_build(nri_update_path,tablename):
 
 
                 # print("checkpoint 6")
+
+                for i in tempdf.columns:
+                    if tempdf[i].dtype=='object':
+                        tempdf[i] = tempdf[i].apply(lambda x: pd.NA if pd.isnull(x)!=True and
+                                # type(x)!='float' and
+                                # type(x)!='int' and
+                                str(x).strip()==''
+                                else x)
                 tablepack[f'{tablename}_{count}'] = tempdf
+
                 count+=1
             else:
                 # print(f'{tablename} not in {i}')
                 pass
+        final = pd.concat([i for i in tablepack.values()])
 
-        return pd.concat([i for i in tablepack.values()])
+        if "statenm" in tablename:
+            final = statenm_fix(final)
+
+        return final
             # return tempdf
     except Exception as e:
         print(e)
@@ -224,9 +237,27 @@ def ph_fix(pastureheights):
     dfcopy = dfcopy.iloc[:,[0,1,2,3,4,5,6,7,8,11,9,10,12]]
     return dfcopy
 
+def statenm_fix(statenm):
+    dfcopy = statenm.copy(deep=True)
+    noname = ['23', '25', '34', '15']
+    if "STATENM" in dfcopy.columns:
+        dfcopy_nonull = dfcopy[pd.isnull(dfcopy.STATENM)!=True].drop_duplicates()
+    small = dfcopy[dfcopy.STATE.isin(noname) ].drop_duplicates()
+    final = pd.concat([dfcopy_nonull,small])
+    return final
+
 def disturbance_fix(disturbance):
     dftemp = disturbance.copy(deep=True)
     for i in dftemp.columns[6:41]:
+        dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: 1 if (type(x)==str) and ("Y" in x) else x)
+        dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: 0 if (type(x)==str) and ("N" in x) else x)
+        dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: np.nan if (type(x)!=int) else x)
+        dftemp[f'{i}'] = dftemp[f'{i}'].astype('Int64')
+    return dftemp
+
+def concern_fix(disturbance):
+    dftemp = disturbance.copy(deep=True)
+    for i in dftemp.columns[5:27]:
         dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: 1 if (type(x)==str) and ("Y" in x) else x)
         dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: 0 if (type(x)==str) and ("N" in x) else x)
         dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: np.nan if (type(x)!=int) else x)
@@ -240,17 +271,20 @@ def practice_fix(practice):
         dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: 0 if (type(x)==str) and ("N" in x) else x)
         dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: np.nan if (type(x)!=int) else x)
         dftemp[f'{i}'] = dftemp[f'{i}'].astype('Int64')
-    dftemp.drop(columns=['P528A', 'N528A'], inplace=True)
+    if 'P528A' in dftemp.columns:
+        dftemp.drop(columns=['P528A'], inplace=True)
+    if 'N528A' in dftemp.columns:
+        dftemp.drop(columns=['N528A'], inplace=True)
     return dftemp
 
 def point_fix(point):
-    yn_indices = [,'FULL_ESD_PLOT', 'BASAL_GAPS_NESW', 'CANOPY_GAPS_NESW',
+    yn_indices = ['FULL_ESD_PLOT', 'BASAL_GAPS_NESW', 'CANOPY_GAPS_NESW',
        'BASAL_GAPS_NWSE', 'CANOPY_GAPS_NWSE', 'HAYED', 'OPT_SSI_PASTURE',
        'OPT_DWR_PASTURE', 'OPT_DWR_RANGE', 'SAGE_EXISTS',
        'PERENNIAL_CANOPY_GAPS_NESW', 'PERENNIAL_CANOPY_GAPS_NWSE',
        'COMPONENT_POPULATED', 'GAPS_DIFFERENT_NESW', 'GAPS_DIFFERENT_NWSE']
     dftemp = point.copy(deep=True)
-    for i in dftemp.filter([yn_indices]):
+    for i in dftemp.filter(yn_indices):
         dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: 1 if (type(x)==str) and ("Y" in x) else x)
         dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: 0 if (type(x)==str) and ("N" in x) else x)
         dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: np.nan if (type(x)!=int) else x)
@@ -265,7 +299,7 @@ def ret_access(whichmdb):
     engine = create_engine(connection_url)
     return engine
 
-def type_lookup(basepath, tablename, which_return, year):
+def type_lookup(basepath, tablename, which_return, year=None):
     """
     ex:
     type_lookup(path, "ALTWOODY", "lengths")
@@ -275,9 +309,9 @@ def type_lookup(basepath, tablename, which_return, year):
     return_dict = {}
 
     columnexps = {
-        "2004" : r"C:\Users\kbonefont\Desktop\nri\ingestables\2004-2008 NRI Range Change Data Dump Columns.xlsx",
-        "2009" : r"C:\Users\kbonefont\Desktop\nri\ingestables\2009-2018 NRI Range Data Dump Columns.xlsx",
-        "2019" : r"C:\Users\kbonefont\Desktop\nri\ingestables\2020 nri_data_column_explanations.csv"
+        "2004" : r"C:\Users\kbonefont\OneDrive - USDA\Documents\GitHub\ingest_nri\ingestables\2004-2008 NRI Range Change Data Dump Columns.xlsx",
+        "2009" : r"C:\Users\kbonefont\OneDrive - USDA\Documents\GitHub\ingest_nri\ingestables\2009-2018 NRI Range Data Dump Columns.xlsx",
+        "2019" : r"C:\Users\kbonefont\OneDrive - USDA\Documents\GitHub\ingest_nri\ingestables\nri_data_column_explanations.csv"
     }
 
     if int(year)>=2004 and int(year)<=2008:
@@ -286,14 +320,6 @@ def type_lookup(basepath, tablename, which_return, year):
         exp_file = columnexps["2009"]
     else:
         exp_file = columnexps["2019"]
-
-
-    # if 'ecosite'.upper() in tablename:
-    #     print("OK")
-    #     exp_file = os.path.join(basepath,'2004-2008 NRI Range Change Data Dump Columns.xlsx')
-    # else:
-    #     print("NOT")
-    #     exp_file = os.path.join(basepath,where_expl[0])
 
 
     nri_explanations = pd.read_excel(exp_file) if (int(year)>=2004) and (int(year)<=2018) else pd.read_csv(exp_file)
@@ -363,47 +389,7 @@ def pg_send(df,acc_path, tablename, access = False):
         """
         for i, cdf in enumerate(chunker(df,chunksize)):
             replace = "replace" if i == 0 else "append"
-            # area for on the fly pg/access type creation
-            #  using alchemy_ret
-            temptypes = type_lookup(basebase, tablename.upper(), "types")
-            templengths = type_lookup(basebase, tablename.upper(), "lengths")
-            def alchemy_ret(type,len=None):
-                """
-                function that takes a type(numeric or character+length) returns
-                a sqlalchemy/pg compatible type
-                """
-                if (type=='numeric') and (len==None):
-                    return sqlalchemy.types.Float(precision=3, asdecimal=True)
-                elif (type=='character') and (len!=None):
-                    return sqlalchemy.types.String(length=len)
-
-            for key in temptypes:
-                """
-                creating custom dictionary per table to map pandas types to pg
-                """
-                state_key = ["STATE", "COUNTY"]
-                if 'PrimaryKey' not in temptypes:
-                    onthefly.update({"PrimaryKey":sa_a.ShortText(17)})
-                if 'FIPSPSUPNT' not in temptypes:
-                    onthefly.update({"FIPSPSUPNT":sa_a.ShortText(13)})
-                if 'PastureRegion' not in temptypes:
-                    onthefly.update({"PastureRegion":sa_a.ShortText(15)})
-                if key not in only_once:
-                    only_once.add(key)
-
-                    if temptypes[key]=='numeric':
-                        onthefly.update({f'{key}':alchemy_ret(temptypes[key])})
-                        for k in state_key:
-                            if k == "STATE":
-                                onthefly.update({f'{k}':alchemy_ret('character',2)})
-                            if k=="COUNTY":
-                                onthefly.update({f'{k}':alchemy_ret('character',3)})
-
-                    if temptypes[key]=='character':
-                        onthefly.update({f'{key}':alchemy_ret(temptypes[key],templengths[key])})
-
-                        if key == "PTNOTE":
-                            onthefly.update({"PTNOTE":sqlalchemy.types.Text})
+        
 
             onthefly = revised_otf(df, onthefly)
 
