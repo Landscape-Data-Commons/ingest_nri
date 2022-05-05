@@ -2,7 +2,7 @@ import os, sqlalchemy
 import os.path
 import pandas as pd
 import numpy as np
-from src.utils.utils import db, sql_str, config, Acc
+from src.utils.utils import db, sql_str, config, Acc, Ingester
 from sqlalchemy import create_engine, DDL
 import sqlalchemy_access as sa_a
 from psycopg2 import sql
@@ -96,13 +96,13 @@ def header_build(nri_update_path,tablename):
                 fix_longitudes = ['TARGET_LONGITUDE','FIELD_LONGITUDE']
 
                 # if "pintercept" in tablename:
-                for i in tempdf.columns:
-                    if tempdf[i].dtype=="object":
-                        tempdf[i] = tempdf[i].apply(lambda x: pd.NA if type(x)!="float" and
-                                    pd.isnull(x)!=True and
-                                    (str(x).strip()=="." or
-                                    str(x).strip()=="")
-                                    else str(x).strip())
+                # for i in tempdf.columns:
+                #     if tempdf[i].dtype=="object":
+                #         tempdf[i] = tempdf[i].apply(lambda x: pd.NA if type(x)!="float" and
+                #                     pd.isnull(x)!=True and
+                #                     (str(x).strip()=="." or
+                #                     str(x).strip()=="")
+                #                     else str(x).strip())
 
                 if 'COUNTY' in tempdf.columns:
                     tempdf['COUNTY'] = tempdf['COUNTY'].map(lambda x: f'{x:0>3}')
@@ -121,13 +121,13 @@ def header_build(nri_update_path,tablename):
 
                 # print("checkpoint 6")
 
-                for i in tempdf.columns:
-                    if tempdf[i].dtype=='object':
-                        tempdf[i] = tempdf[i].apply(lambda x: pd.NA if pd.isnull(x)!=True and
-                                # type(x)!='float' and
-                                # type(x)!='int' and
-                                str(x).strip()==''
-                                else x)
+                # for i in tempdf.columns:
+                #     if tempdf[i].dtype=='object':
+                #         tempdf[i] = tempdf[i].apply(lambda x: pd.NA if pd.isnull(x)!=True and
+                #                 # type(x)!='float' and
+                #                 # type(x)!='int' and
+                #                 str(x).strip()==''
+                #                 else x)
                 tablepack[f'{tablename}_{count}'] = tempdf
 
                 count+=1
@@ -271,6 +271,11 @@ def practice_fix(practice):
         dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: 0 if (type(x)==str) and ("N" in x) else x)
         dftemp[f'{i}'] = dftemp[f'{i}'].apply(lambda x: np.nan if (type(x)!=int) else x)
         dftemp[f'{i}'] = dftemp[f'{i}'].astype('Int64')
+
+    for i in dftemp.columns[5:49]:
+        if dftemp[f'{i}'].dtype=='object':
+            dftemp[f'{i}'] = dftemp[f'{i}'].astype('Int64')
+
     if 'P528A' in dftemp.columns:
         dftemp.drop(columns=['P528A'], inplace=True)
     if 'N528A' in dftemp.columns:
@@ -367,8 +372,8 @@ def pg_send(df,acc_path, tablename, access = False):
     todo:
     X switching off/on access and pg --done
     """
-
-    con = db.str
+    d =db("nri")
+    con = d.str
     cursor = con.cursor()
     #access path changes!
     cxn = ret_access(acc_path)
@@ -383,32 +388,140 @@ def pg_send(df,acc_path, tablename, access = False):
     only_once = set()
     onthefly = {}
     basebase = os.path.dirname(acc_path)
-    with tqdm(total=len(df)) as pbar:
-        """
-        loop to use the progress bar on each iteration
-        """
-        for i, cdf in enumerate(chunker(df,chunksize)):
-            replace = "replace" if i == 0 else "append"
-        
-
-            onthefly = revised_otf(df, onthefly)
+    if access!=False:
+        with tqdm(total=len(df)) as pbar:
+            """
+            loop to use the progress bar on each iteration
+            """
+            for i, cdf in enumerate(chunker(df,chunksize)):
+                replace = "replace" if i == 0 else "append"
 
 
+                onthefly = revised_otf(df, onthefly)
 
-            if access!=False:
+
+
+                # if access!=False:
                 cdf.to_sql(name=f'{tablename}',
                            con=ret_access(acc_path),
                            index=False,
                            dtype=onthefly,
                            if_exists=replace)
-            # else clause will send to pg
+                # else clause will send to pg
+                # else:
+                #     Ingester.main_ingest(cdf)
 
 
-            pbar.update(chunksize)
-        tqdm._instances.clear()
-    tqdm.write(f'{tablename} sent to db')
+
+                pbar.update(chunksize)
+            tqdm._instances.clear()
+        tqdm.write(f'{tablename} sent to db')
+    else:
+        try:
+            if tablecheck(tablename):
+                Ingester.main_ingest(df, tablename, con)
+            else:
+                table_create(df, tablename)
+                Ingester.main_ingest(df, tablename, con)
+
+        except Exception as e:
+            print(e)
 
 def dbkey_gen(df,newfield, *fields):
     dfcopy = df.copy()
     dfcopy[f'{newfield}'] = (df[[f'{field.strip()}' for field in fields]].astype(str)).agg(''.join,axis=1).astype(object)
     return dfcopy
+
+
+def table_create(df:pd.DataFrame, tablename: str):
+    """
+    pulls all fields from dataframe and constructs a postgres table schema;
+    using that schema, create new table in postgres.
+    """
+    d = db('nri')
+
+    try:
+        print("checking fields")
+        comm = create_command(df, tablename)
+        con = d.str
+        cur = con.cursor()
+        # return comm
+        cur.execute(comm)
+        # cur.execute(tables.set_srid()) if "Header" in tablename else None
+        con.commit()
+
+    except Exception as e:
+        print(e)
+        d = db('nri')
+        con = d.str
+        cur = con.cursor()
+
+
+
+def create_command(df, tablename):
+    """
+    creates a complete CREATE TABLE postgres statement
+    by only supplying tablename
+    currently handles: HEADER, Gap
+    """
+
+    str = f'CREATE TABLE "{tablename}" '
+    str+=field_appender(df)
+
+
+    return str
+
+
+def df2pg(df):
+    type_translate = {
+        np.dtype('int64'): "INTEGER",
+        pd.Int64Dtype(): "INTEGER",
+        np.dtype('O'): "TEXT",
+        np.dtype("float64"): "NUMERIC",
+        np.dtype("datetime64"): "DATE"
+    }
+    return {i:type_translate[j] for i,j in df.dtypes.to_dict().items()}
+
+
+def field_appender(df):
+    """
+    uses schema_chooser to pull a schema for a specific table
+    and create a postgres-ready string of fields and field types
+    """
+
+    str = "( "
+    count = 0
+    di = df2pg(df)
+
+    for k,v in di.items():
+        if count<(len(di.items())-1):
+            str+= f'"{k}" {v.upper()}, '
+            count+=1
+        else:
+            str+= f'"{k}" {v.upper()} );'
+    return str
+
+
+
+def tablecheck(tablename):
+    """
+    receives a tablename and returns true if table exists in postgres table
+    schema, else returns false
+
+    """
+    tableschema = 'public'
+    try:
+        d = db('nri')
+        con = d.str
+        cur = con.cursor()
+        cur.execute("select exists(select * from information_schema.tables where table_name=%s and table_schema=%s)", (f'{tablename}',f'{tableschema}',))
+        if cur.fetchone()[0]:
+            return True
+        else:
+            return False
+
+    except Exception as e:
+        print(e)
+        d = db('nri')
+        con = d.str
+        cur = con.cursor()
