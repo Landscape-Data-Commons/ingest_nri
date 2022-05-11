@@ -24,5 +24,5 @@ RUN pip3 install --no-cache-dir -r /usr/src/src/requirements.txt
 COPY / .
 
 # run application
-# CMD ["python3", "/usr/src/index.py"]
-CMD ["tail","-f", "/dev/null"]
+CMD ["python3", "/usr/src/src/index.py"]
+ #CMD ["tail","-f", "/dev/null"]

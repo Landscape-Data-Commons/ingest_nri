@@ -2,7 +2,9 @@ import os, sqlalchemy
 import os.path
 import pandas as pd
 import numpy as np
-from src.utils.utils import db, sql_str, config, Acc, Ingester
+import utils.utils as tutils
+import utils.dbutils as dbc
+
 from sqlalchemy import create_engine, DDL
 import sqlalchemy_access as sa_a
 from psycopg2 import sql
@@ -372,7 +374,7 @@ def pg_send(df,acc_path, tablename, access = False):
     todo:
     X switching off/on access and pg --done
     """
-    d =db("nri")
+    d = dbc.db("nri")
     con = d.str
     cursor = con.cursor()
     #access path changes!
@@ -381,7 +383,7 @@ def pg_send(df,acc_path, tablename, access = False):
     def chunker(seq, size):
         return (seq[pos:pos + size] for pos in range(0, len(seq), size))
 
-    engine = create_engine(sql_str(config()))
+    engine = create_engine(tutils.sql_str(dbc.config()))
 
     chunksize = int(len(df) / 10)
     tqdm.write(f'sending {tablename} to pg...')
@@ -409,7 +411,7 @@ def pg_send(df,acc_path, tablename, access = False):
                            if_exists=replace)
                 # else clause will send to pg
                 # else:
-                #     Ingester.main_ingest(cdf)
+                #     tutils.Ingester.main_ingest(cdf)
 
 
 
@@ -419,10 +421,10 @@ def pg_send(df,acc_path, tablename, access = False):
     else:
         try:
             if tablecheck(tablename):
-                Ingester.main_ingest(df, tablename, con)
+                tutils.Ingester.main_ingest(df, tablename, con)
             else:
                 table_create(df, tablename)
-                Ingester.main_ingest(df, tablename, con)
+                tutils.Ingester.main_ingest(df, tablename, con)
 
         except Exception as e:
             print(e)
@@ -438,7 +440,7 @@ def table_create(df:pd.DataFrame, tablename: str):
     pulls all fields from dataframe and constructs a postgres table schema;
     using that schema, create new table in postgres.
     """
-    d = db('nri')
+    d = dbc.db('nri')
 
     try:
         print("checking fields")
@@ -452,7 +454,7 @@ def table_create(df:pd.DataFrame, tablename: str):
 
     except Exception as e:
         print(e)
-        d = db('nri')
+        d = dbc.db('nri')
         con = d.str
         cur = con.cursor()
 
@@ -511,7 +513,7 @@ def tablecheck(tablename):
     """
     tableschema = 'public'
     try:
-        d = db('nri')
+        d = dbc.db('nri')
         con = d.str
         cur = con.cursor()
         cur.execute("select exists(select * from information_schema.tables where table_name=%s and table_schema=%s)", (f'{tablename}',f'{tableschema}',))
@@ -522,6 +524,6 @@ def tablecheck(tablename):
 
     except Exception as e:
         print(e)
-        d = db('nri')
+        d = dbc.db('nri')
         con = d.str
         cur = con.cursor()
